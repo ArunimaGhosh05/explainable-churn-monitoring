@@ -117,6 +117,19 @@ def run_all_scenarios():
     avg_false_alarms = s0_data.groupby("seed")["drifted"].sum().mean()
     print(f"\nAverage false alarms per seed in S0: {avg_false_alarms:.1f} out of {len(NUMERIC_FEATURES) + len(CATEGORICAL_FEATURES)} features")
 
+    # Save a clean summary table for the paper
+    summary_rows = []
+    for seed in range(N_SEEDS):
+        seed_data = s0_data[s0_data["seed"] == seed]
+        summary_rows.append({
+            "seed": seed,
+            "n_flagged": int(seed_data["drifted"].sum()),
+            "n_total": len(seed_data),
+            "false_alarm_rate": round(seed_data["drifted"].sum() / len(seed_data), 3)
+        })
+    summary_df = pd.DataFrame(summary_rows)
+    summary_df.to_csv("results/tables/s0_false_alarm_summary.csv", index=False)
+    print(f"\nSaved S0 false-alarm summary to results/tables/s0_false_alarm_summary.csv")
 
 if __name__ == "__main__":
     run_all_scenarios()
