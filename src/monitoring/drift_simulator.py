@@ -25,6 +25,7 @@ def scenario_s2_drift_unimportant_feature(current_pool_df, feature, std_multipli
     """
     S2: Inject the same kind of drift, but on a feature with low SHAP importance.
     'feature' should be picked using A's SHAP importance ranking (lowest importance feature).
+    Only suitable for continuous numeric features — use scenario_shift_binary_feature for 0/1 features.
     """
     df = current_pool_df.sample(frac=0.8, random_state=seed).reset_index(drop=True).copy()
     shift_amount = df[feature].std() * std_multiplier
@@ -32,8 +33,22 @@ def scenario_s2_drift_unimportant_feature(current_pool_df, feature, std_multipli
     return df
 
 
+def scenario_shift_binary_feature(current_pool_df, feature, flip_fraction=0.3, seed=0):
+    """
+    For binary (0/1) features: a constant std-shift doesn't change the distribution shape,
+    so PSI barely reacts. Instead, flip a fraction of values to change the proportion of 1s,
+    which is the meaningful way to simulate drift on a binary feature.
+    """
+    df = current_pool_df.sample(frac=0.8, random_state=seed).reset_index(drop=True).copy()
+    rng = np.random.default_rng(seed)
+    n_flip = int(len(df) * flip_fraction)
+    flip_idx = rng.choice(df.index, size=n_flip, replace=False)
+    df.loc[flip_idx, feature] = 1 - df.loc[flip_idx, feature]
+    return df
+
+
 def get_scenario_data(scenario_id, current_pool_df, important_feature="MonthlyCharges",
-                       unimportant_feature=None, std_multiplier=1.0, seed=0):
+                       unimportant_feature=None, std_multiplier=1.0, flip_fraction=0.3, seed=0):
     """
     Convenience function: pass a scenario ID, get back the current-data version for that scenario.
     """
@@ -45,6 +60,13 @@ def get_scenario_data(scenario_id, current_pool_df, important_feature="MonthlyCh
     elif scenario_id == "S2":
         if unimportant_feature is None:
             raise ValueError("S2 requires 'unimportant_feature' (from SHAP ranking, lowest importance).")
+
+        # binary (0/1) features need flip-based drift, not a std-based shift
+        unique_vals = set(current_pool_df[unimportant_feature].dropna().unique())
+        if unique_vals <= {0, 1}:
+            return scenario_shift_binary_feature(current_pool_df, feature=unimportant_feature,
+                                                  flip_fraction=flip_fraction, seed=seed)
+
         return scenario_s2_drift_unimportant_feature(current_pool_df, feature=unimportant_feature,
                                                        std_multiplier=std_multiplier, seed=seed)
     else:

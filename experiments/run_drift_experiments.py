@@ -8,37 +8,50 @@ from monitoring.drift_simulator import get_scenario_data
 from monitoring.drift_metrics import detect_drift_all_features
 from monitoring.rca import compute_rca, top_k_contributors
 
-# ---- CONFIG (swap these for real values once A delivers data) ----
-SEED = 1
+# ---- CONFIG (using A's real data and real SHAP importance) ----
 N_SEEDS = 5  # run each scenario multiple times, as planned
-NUMERIC_FEATURES = ["MonthlyCharges", "tenure", "SeniorCitizen"]
-CATEGORICAL_FEATURES = []  # add real categorical columns once using Telco data
-IMPORTANT_FEATURE = "MonthlyCharges"      # placeholder until A gives real top SHAP feature
-UNIMPORTANT_FEATURE = "SeniorCitizen"     # placeholder until A gives real lowest SHAP feature
 
-# FAKE shap importance until A delivers the real one
-FAKE_SHAP_IMPORTANCE = {
-    "MonthlyCharges": 0.45,
-    "tenure": 0.30,
-    "SeniorCitizen": 0.05
+NUMERIC_FEATURES = ["tenure", "MonthlyCharges", "TotalCharges", "SeniorCitizen"]
+CATEGORICAL_FEATURES = [
+    "gender", "Partner", "Dependents", "PhoneService", "MultipleLines",
+    "InternetService", "OnlineSecurity", "OnlineBackup", "DeviceProtection",
+    "TechSupport", "StreamingTV", "StreamingMovies", "Contract",
+    "PaperlessBilling", "PaymentMethod"
+]
+
+IMPORTANT_FEATURE = "MonthlyCharges"      # numeric, high SHAP importance (0.393)
+UNIMPORTANT_FEATURE = "SeniorCitizen"     # numeric, low SHAP importance (0.056)
+
+# REAL SHAP importance from A's shap_importance.json
+REAL_SHAP_IMPORTANCE = {
+    "Contract": 0.9818646311759949,
+    "tenure": 0.656414270401001,
+    "InternetService": 0.4604584574699402,
+    "MonthlyCharges": 0.3925558030605316,
+    "TotalCharges": 0.270155668258667,
+    "PaymentMethod": 0.24200856685638428,
+    "TechSupport": 0.17802315950393677,
+    "PaperlessBilling": 0.1404784917831421,
+    "OnlineBackup": 0.11156638711690903,
+    "OnlineSecurity": 0.10958608239889145,
+    "StreamingMovies": 0.09686917066574097,
+    "StreamingTV": 0.0679873526096344,
+    "MultipleLines": 0.06600596010684967,
+    "Dependents": 0.058571573346853256,
+    "SeniorCitizen": 0.05641785264015198,
+    "PhoneService": 0.05455981194972992,
+    "gender": 0.048398979008197784,
+    "Partner": 0.04728761687874794,
+    "DeviceProtection": 0.02409215271472931
 }
 
 os.makedirs("results/tables", exist_ok=True)
 
 
-def make_fake_data(seed):
-    """Placeholder data generator — replace with A's real reference/current-pool once ready."""
-    np.random.seed(seed)
-    reference = pd.DataFrame({
-        "MonthlyCharges": np.random.normal(70, 20, 1000),
-        "tenure": np.random.normal(30, 15, 1000),
-        "SeniorCitizen": np.random.normal(0.2, 0.4, 1000),
-    })
-    current_pool = pd.DataFrame({
-        "MonthlyCharges": np.random.normal(70, 20, 1000),
-        "tenure": np.random.normal(30, 15, 1000),
-        "SeniorCitizen": np.random.normal(0.2, 0.4, 1000),
-    })
+def load_real_data():
+    """Load A's real reference/current-pool splits."""
+    reference = pd.read_csv("data/raw/reference.csv")
+    current_pool = pd.read_csv("data/raw/current.csv")
     return reference, current_pool
 
 
@@ -46,9 +59,9 @@ def run_all_scenarios():
     all_drift_rows = []
     all_rca_rows = []
 
-    for seed in range(N_SEEDS):
-        reference, current_pool = make_fake_data(seed)
+    reference, current_pool = load_real_data()  # load once, same data used across all seeds/scenarios
 
+    for seed in range(N_SEEDS):
         for scenario in ["S0", "S1", "S2"]:
             if scenario == "S0":
                 current = get_scenario_data("S0", current_pool, seed=seed)
@@ -68,7 +81,7 @@ def run_all_scenarios():
                 r["seed"] = seed
                 all_drift_rows.append(r)
 
-            rca_df = compute_rca(drift_results, FAKE_SHAP_IMPORTANCE)
+            rca_df = compute_rca(drift_results, REAL_SHAP_IMPORTANCE)
             rca_df["scenario"] = scenario
             rca_df["seed"] = seed
             all_rca_rows.append(rca_df)
@@ -91,6 +104,18 @@ def run_all_scenarios():
         print(f"{scenario}: injected feature = {target_feature}")
         print(f"  RCA ranked it #1 in {rca_top1_hits}/{N_SEEDS} seeds")
         print(f"  PSI-only ranked it #1 in {psi_top1_hits}/{N_SEEDS} seeds")
+
+        # S0 false-alarm rate across all seeds
+    print("\n--- S0 false-alarm check ---")
+    s0_data = drift_df[drift_df["scenario"] == "S0"]
+    for seed in range(N_SEEDS):
+        seed_data = s0_data[s0_data["seed"] == seed]
+        n_flagged = seed_data["drifted"].sum()
+        n_total = len(seed_data)
+        print(f"seed {seed}: {n_flagged}/{n_total} features flagged as drifted (ideally ~0)")
+
+    avg_false_alarms = s0_data.groupby("seed")["drifted"].sum().mean()
+    print(f"\nAverage false alarms per seed in S0: {avg_false_alarms:.1f} out of {len(NUMERIC_FEATURES) + len(CATEGORICAL_FEATURES)} features")
 
 
 if __name__ == "__main__":
