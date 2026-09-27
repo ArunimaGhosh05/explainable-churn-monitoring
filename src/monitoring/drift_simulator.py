@@ -46,12 +46,33 @@ def scenario_shift_binary_feature(current_pool_df, feature, flip_fraction=0.3, s
     df.loc[flip_idx, feature] = 1 - df.loc[flip_idx, feature]
     return df
 
+def scenario_s3_concept_drift(current_pool_df, label_col="Churn", segment_col=None,
+                               segment_value=None, flip_fraction=0.3, seed=0):
+    """
+    S3: Concept drift.
+    Features stay unchanged, but we flip a fraction of the churn labels
+    within a chosen segment (or the whole dataset if segment_col is None).
+    This simulates the relationship between features and churn changing,
+    without any change in the input feature distributions.
+    """
+    df = current_pool_df.sample(frac=0.8, random_state=seed).reset_index(drop=True).copy()
+    rng = np.random.default_rng(seed)
+
+    if segment_col is not None and segment_value is not None:
+        segment_mask = df[segment_col] == segment_value
+    else:
+        segment_mask = pd.Series([True] * len(df))
+
+    segment_idx = df[segment_mask].index
+    n_flip = int(len(segment_idx) * flip_fraction)
+    flip_idx = rng.choice(segment_idx, size=n_flip, replace=False)
+    df.loc[flip_idx, label_col] = 1 - df.loc[flip_idx, label_col]
+
+    return df
 
 def get_scenario_data(scenario_id, current_pool_df, important_feature="MonthlyCharges",
-                       unimportant_feature=None, std_multiplier=1.0, flip_fraction=0.3, seed=0):
-    """
-    Convenience function: pass a scenario ID, get back the current-data version for that scenario.
-    """
+                       unimportant_feature=None, std_multiplier=1.0, flip_fraction=0.3,
+                       label_col="Churn", segment_col=None, segment_value=None, seed=0):
     if scenario_id == "S0":
         return scenario_s0_no_drift(current_pool_df, seed=seed)
     elif scenario_id == "S1":
@@ -59,15 +80,16 @@ def get_scenario_data(scenario_id, current_pool_df, important_feature="MonthlyCh
                                                      std_multiplier=std_multiplier, seed=seed)
     elif scenario_id == "S2":
         if unimportant_feature is None:
-            raise ValueError("S2 requires 'unimportant_feature' (from SHAP ranking, lowest importance).")
-
-        # binary (0/1) features need flip-based drift, not a std-based shift
+            raise ValueError("S2 requires 'unimportant_feature'.")
         unique_vals = set(current_pool_df[unimportant_feature].dropna().unique())
         if unique_vals <= {0, 1}:
             return scenario_shift_binary_feature(current_pool_df, feature=unimportant_feature,
                                                   flip_fraction=flip_fraction, seed=seed)
-
         return scenario_s2_drift_unimportant_feature(current_pool_df, feature=unimportant_feature,
                                                        std_multiplier=std_multiplier, seed=seed)
+    elif scenario_id == "S3":
+        return scenario_s3_concept_drift(current_pool_df, label_col=label_col,
+                                          segment_col=segment_col, segment_value=segment_value,
+                                          flip_fraction=flip_fraction, seed=seed)
     else:
         raise ValueError(f"Unknown scenario: {scenario_id}")
